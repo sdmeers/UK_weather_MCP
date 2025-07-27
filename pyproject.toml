@@ -10,4 +10,5 @@ dependencies = [
 ]
 
 [tool.mcp.plugins]
-weather = "us_mcp_server:mcp"
+US_weather = "us_mcp_server:mcp"
+UK_weather = "UK_Met_Office_Site_Specific_Forecast_MCP:mcp"
