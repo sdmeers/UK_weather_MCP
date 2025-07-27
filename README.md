@@ -33,4 +33,4 @@ Contributions are welcome as the project evolves. Please open an issue or pull r
 
 ## License
 
-[Specify your license here, e.g., MIT, Apache 2.0]
+This project is licensed under the [MIT License](LICENSE).
