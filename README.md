@@ -2,21 +2,18 @@
 
 This repository currently hosts a **work-in-progress** microservice for fetching weather forecasts.
 
-## Current State: US Weather (Test Project)
+## Current State: Weather Forecast Microservices
 
-The `us_mcp_server.py` file contains a basic implementation for fetching weather data, primarily serving as a testbed for the microservice architecture. This is a temporary setup.
+This repository now hosts two functional microservices for fetching weather forecasts:
 
-## Future Direction: UK Met Office Integration
+-   **US Weather Microservice**: `us_mcp_server.py` provides basic weather data, primarily serving as a testbed for the microservice architecture.
+-   **UK Met Office Microservice**: `UK_Met_Office_Site_Specific_Forecast_MCP.py` integrates with the **UK Met Office Site-Specific forecast API** via the Met Office DataHub (https://datahub.metoffice.gov.uk/) to provide UK-specific weather data and forecast parameters.
 
-The primary goal of this project is to reimplement the weather forecasting logic to utilize the **UK Met Office Site-Specific forecast API** via the Met Office DataHub (https://datahub.metoffice.gov.uk/). This will involve:
+## Getting Started
 
--   Integration with the Met Office DataHub API.
--   Handling UK-specific weather data and forecast parameters.
--   Refactoring the existing test implementation.
+### US Weather Microservice
 
-## Getting Started (Current Test Server)
-
-To run the current US weather test server:
+To run the US weather microservice:
 
 1.  Ensure you have Python installed.
 2.  Install any necessary dependencies (if any, typically listed in `pyproject.toml` or `requirements.txt`).
@@ -25,7 +22,21 @@ To run the current US weather test server:
     python us_mcp_server.py
     ```
 
-Further instructions will be provided as the UK Met Office integration progresses.
+### UK Met Office Microservice
+
+To run the UK Met Office microservice:
+
+1.  Ensure you have Python installed.
+2.  Install any necessary dependencies (if any, typically listed in `pyproject.toml` or `requirements.txt`).
+3.  **Set up API Credentials**: You will need to obtain API credentials from the Met Office DataHub. Create a `private` directory in the project root and add a file named `met_office_api_key.txt` inside it. This file should contain your API key.
+    ```
+    # Example: private/met_office_api_key.txt
+    YOUR_MET_OFFICE_API_KEY_HERE
+    ```
+4.  Run the server:
+    ```bash
+    python UK_Met_Office_Site_Specific_Forecast_MCP.py
+    ```
 
 ## Contributing
 
