@@ -1,7 +1,12 @@
+#!/usr/bin/env python3
 import os
+import logging
 from typing import Any
 import httpx
 from mcp.server.fastmcp import FastMCP
+
+# Set up basic logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 # Initialize FastMCP server
 mcp = FastMCP("UK_weather")
@@ -68,10 +73,10 @@ async def make_met_office_request(url: str, params: dict[str, Any] | None = None
             response.raise_for_status()
             return response.json()
         except httpx.HTTPStatusError as e:
-            print(f"HTTP Error: {e.response.status_code} - {e.response.text}")
+            logging.error(f"HTTP Error: {e.response.status_code} - {e.response.text}")
             return None
         except Exception as e:
-            print(f"An error occurred: {e}")
+            logging.error(f"An error occurred: {e}")
             return None
 
 @mcp.tool()
@@ -83,8 +88,6 @@ async def get_daily_forecast(latitude: float, longitude: float) -> str:
         longitude: Longitude of the location.
     """
     url = f"{MET_OFFICE_API_BASE}/daily"
-    # The dataSource determines the forecast type. 'BD1' is for the UK 3-hourly site-specific forecast.
-    # The API seems to use it for daily as well based on the endpoint.
     params = {
         "dataSource": "BD1",
         "latitude": latitude,
@@ -97,41 +100,62 @@ async def get_daily_forecast(latitude: float, longitude: float) -> str:
         return "Unable to fetch forecast data for this location."
 
     try:
-        # According to Met Office docs, the data is nested.
         time_series = data['features'][0]['properties']['timeSeries']
         location_name = data['features'][0]['properties']['location']['name']
 
+        def _format(value: Any, unit: str = "", factor: float = 1.0) -> str:
+            """Safely formats a numeric value to 1 decimal place."""
+            if isinstance(value, (int, float)):
+                return f"{(value * factor):.1f}{unit}"
+            return "N/A"
+
         forecasts = [f"Daily forecast for {location_name}:"]
         for period in time_series:
-            # The time is in ISO 8601 format (e.g., "2024-05-21T12:00Z"), let's just show the date part.
             date = period['time'].split('T')[0]
-            day_max_temp = period.get('dayMaxScreenTemperature', 'N/A')
-            night_min_temp = period.get('nightMinScreenTemperature', 'N/A')
-            day_wind_speed = period.get('midday10MWindSpeed', 'N/A')
 
-            day_weather_code = period.get('daySignificantWeatherCode', 'NA')
-            night_weather_code = period.get('nightSignificantWeatherCode', 'NA')
+            # Temperatures
+            day_max_temp = _format(period.get('dayMaxScreenTemperature'), "°C")
+            night_min_temp = _format(period.get('nightMinScreenTemperature'), "°C")
+            day_max_feels_like = _format(period.get('dayMaxFeelsLikeTemp'), "°C")
+            night_min_feels_like = _format(period.get('nightMinFeelsLikeTemp'), "°C")
 
-            day_weather_desc = get_weather_description(day_weather_code)
-            night_weather_desc = get_weather_description(night_weather_code)
+            # Precipitation
+            day_precip_prob = _format(period.get('dayProbabilityOfPrecipitation'), "%")
+            night_precip_prob = _format(period.get('nightProbabilityOfPrecipitation'), "%")
 
-            if day_max_temp == 'N/A' or night_min_temp == 'N/A' or day_wind_speed == 'N/A':
-                print(f"Warning: Missing temperature or wind speed data for {date}. Raw data for this period: {period}")
+            # Other daily metrics
+            max_uv = _format(period.get('maxUvIndex'))
+            midday_humidity = _format(period.get('middayRelativeHumidity'), "%")
+            midday_visibility_km = _format(period.get('middayVisibility'), " km", 0.001)
+            midday_mslp_hpa = _format(period.get('middayMslp'), " hPa", 0.01)
+            day_wind_speed_mph = _format(period.get('midday10MWindSpeed'), " mph", 2.23694)
+
+            # Weather descriptions
+            day_weather_desc = get_weather_description(period.get('daySignificantWeatherCode', 'NA'))
+            night_weather_desc = get_weather_description(period.get('nightSignificantWeatherCode', 'NA'))
 
             forecast = f"""
 ---
 Date: {date}
-Max Temp: {day_max_temp}°C
-Min Temp: {night_min_temp}°C
-Weather Type: {day_weather_desc} (Day), {night_weather_desc} (Night)
-Wind Speed (10m): {day_wind_speed} mph
-"""
-            forecasts.append(forecast)
+Max Temp: {day_max_temp}
+Min Temp: {night_min_temp}
+Feels Like Max Temp: {day_max_feels_like}
+Feels Like Min Temp (Night): {night_min_feels_like}
+Day Precipitation Probability: {day_precip_prob}
+Night Precipitation Probability: {night_precip_prob}
+Max UV Index: {max_uv}
+Midday Relative Humidity: {midday_humidity}
+Midday Visibility: {midday_visibility_km}
+Midday Pressure (MSL): {midday_mslp_hpa}
+Wind Speed (10m): {day_wind_speed_mph}
+Weather: {day_weather_desc} (Day), {night_weather_desc} (Night)"""
+            forecasts.append(forecast.strip())
 
         return "\n".join(forecasts)
-    except (KeyError, IndexError):
+    except (KeyError, IndexError) as e:
+        logging.error(f"Failed to parse forecast data: {e}. Raw data: {data}")
         return "Failed to parse the forecast data. The structure might have changed or the location is invalid."
 
 if __name__ == "__main__":
     # Initialize and run the server
-    mcp.run(transport='stdio')
+    mcp.run()
