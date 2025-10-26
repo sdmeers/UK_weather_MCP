@@ -61,7 +61,7 @@ def get_weather_description(code: Any) -> str:
     except (ValueError, TypeError):
         return WEATHER_CODES.get(str(code), f"Unknown code: {code}")
 
-async def make_met_office_request(url: str, params: dict[str, Any] | None = None) -> dict[str, Any] | None:
+async def _make_met_office_request(url: str, params: dict[str, Any] | None = None) -> dict[str, Any] | None:
     """Make a request to the Met Office API with proper error handling."""
     headers = {
         "accept": "application/json",
@@ -79,95 +79,119 @@ async def make_met_office_request(url: str, params: dict[str, Any] | None = None
             logging.error(f"An error occurred: {e}")
             return None
 
-@mcp.tool()
-async def get_hourly_forecast(latitude: float, longitude: float) -> str:
-    """Get the hourly weather forecast for a location in the UK.
 
-    Args:
-        latitude: Latitude of the location.
-        longitude: Longitude of the location.
-    """
-    url = f"{MET_OFFICE_API_BASE}/hourly"
-    # https://datahub.metoffice.gov.uk/docs/f/category/site-specific/type/site-specific/api-documentation#get-/point/hourly
-    # The request data source must be BD1.
+async def _get_forecast_data(forecast_type: str, latitude: float, longitude: float) -> dict[str, Any] | None:
+    """Fetches forecast data from the Met Office API."""
+    url = f"{MET_OFFICE_API_BASE}/{forecast_type}"
     params = {
         "dataSource": "BD1",
         "latitude": latitude,
         "longitude": longitude,
         "includeLocationName": "true",
     }
-    data = await make_met_office_request(url, params=params)
+    return await _make_met_office_request(url, params=params)
 
+
+def _format_forecast_section(title: str, data: dict[str, Any]) -> str:
+    """Formats a section of the forecast."""
+    lines = [f"---", title]
+    for key, value in data.items():
+        lines.append(f"{key}: {value}")
+    return "\n".join(lines)
+
+
+def _parse_hourly_forecast(time_series: list[dict[str, Any]]) -> str:
+    """Parses and formats the hourly forecast data."""
+    forecasts = []
+    for period in time_series:
+        time = period.get("time", "N/A")
+        temp = period.get("screenTemperature", "N/A")
+        feels_like = period.get("feelsLikeTemperature", "N/A")
+        humidity = period.get("screenRelativeHumidity", "N/A")
+        wind_speed = period.get("windSpeed10m", "N/A")
+        wind_direction = period.get("windDirectionFrom10m", "N/A")
+        weather_code = period.get("significantWeatherCode", "NA")
+        precipitation_rate = period.get("precipitationRate", "N/A")
+        precipitation_prob = period.get("probOfPrecipitation", "N/A")
+        visibility = period.get("visibility", "N/A")
+        uv_index = period.get("uvIndex", "N/A")
+        pressure = period.get("mslp", "N/A")
+
+        weather_desc = get_weather_description(weather_code)
+
+        wind_speed_mph = f"{wind_speed * 2.237:.1f}" if isinstance(wind_speed, (int, float)) else "N/A"
+        pressure_mb = f"{pressure / 100:.1f}" if isinstance(pressure, (int, float)) else "N/A"
+        visibility_km = f"{visibility / 1000:.1f}" if isinstance(visibility, (int, float)) else "N/A"
+
+        forecast_data = {
+            "Temperature": f'{temp}°C (feels like {feels_like}°C)',
+            "Weather": weather_desc,
+            "Wind": f"{wind_speed_mph} mph from {wind_direction}°",
+            "Humidity": f"{humidity}%",
+            "Precipitation": f"{precipitation_rate} mm/h ({precipitation_prob}% chance)",
+            "Pressure": f"{pressure_mb} mb",
+            "Visibility": f"{visibility_km} km",
+            "UV Index": uv_index,
+        }
+        forecasts.append(_format_forecast_section(f"Time: {time}", forecast_data))
+
+    return "\n".join(forecasts)
+
+
+def _parse_daily_forecast(time_series: list[dict[str, Any]]) -> str:
+    """Parses and formats the daily forecast data."""
+    def _format(value: Any, unit: str = "", factor: float = 1.0) -> str:
+        if isinstance(value, (int, float)):
+            return f"{(value * factor):.1f}{unit}"
+        return "N/A"
+
+    forecasts = []
+    for period in time_series:
+        date = period['time'].split('T')[0]
+
+        forecast_data = {
+            "Max Temp": _format(period.get('dayMaxScreenTemperature'), "°C"),
+            "Min Temp": _format(period.get('nightMinScreenTemperature'), "°C"),
+            "Feels Like Max Temp": _format(period.get('dayMaxFeelsLikeTemp'), "°C"),
+            "Feels Like Min Temp (Night)": _format(period.get('nightMinFeelsLikeTemp'), "°C"),
+            "Day Precipitation Probability": _format(period.get('dayProbabilityOfPrecipitation'), "%"),
+            "Night Precipitation Probability": _format(period.get('nightProbabilityOfPrecipitation'), "%"),
+            "Max UV Index": _format(period.get('maxUvIndex')),
+            "Midday Relative Humidity": _format(period.get('middayRelativeHumidity'), "%"),
+            "Midday Visibility": _format(period.get('middayVisibility'), " km", 0.001),
+            "Midday Pressure (MSL)": _format(period.get('middayMslp'), " hPa", 0.01),
+            "Wind Speed (10m)": _format(period.get('midday10MWindSpeed'), " mph", 2.23694),
+            "Weather": f"{get_weather_description(period.get('daySignificantWeatherCode', 'NA'))} (Day), "
+                       f"{get_weather_description(period.get('nightSignificantWeatherCode', 'NA'))} (Night)",
+        }
+        forecasts.append(_format_forecast_section(f"Date: {date}", forecast_data))
+
+    return "\n".join(forecasts)
+
+
+@mcp.tool()
+async def get_hourly_forecast(latitude: float, longitude: float) -> str:
+    """Get the hourly weather forecast for a location in the UK."""
+    data = await _get_forecast_data("hourly", latitude, longitude)
     if not data:
         return "Unable to fetch forecast data for this location."
 
     try:
-        # Extract time series and location from the response
         time_series = data["features"][0]["properties"]["timeSeries"]
         coordinates = data["features"][0]["geometry"]["coordinates"]
         location_info = f"Location: {coordinates[1]:.4f}°N, {coordinates[0]:.4f}°E"
 
-        forecasts = [f"Hourly forecast for {location_info}:"]
-
-        for period in time_series:
-            # Parse the hourly data fields
-            time = period["time"]
-            temp = period.get("screenTemperature", "N/A")
-            feels_like = period.get("feelsLikeTemperature", "N/A")
-            humidity = period.get("screenRelativeHumidity", "N/A")
-            wind_speed = period.get("windSpeed10m", "N/A")
-            wind_direction = period.get("windDirectionFrom10m", "N/A")
-            weather_code = period.get("significantWeatherCode", "NA")
-            precipitation_rate = period.get("precipitationRate", "N/A")
-            precipitation_prob = period.get("probOfPrecipitation", "N/A")
-            visibility = period.get("visibility", "N/A")
-            uv_index = period.get("uvIndex", "N/A")
-            pressure = period.get("mslp", "N/A")
-
-            weather_desc = get_weather_description(weather_code)
-
-            # Convert units for better readability
-            wind_speed_mph = (
-                f"{wind_speed * 2.237:.1f}" if wind_speed != "N/A" else "N/A"
-            )
-            pressure_mb = f"{pressure / 100:.1f}" if pressure != "N/A" else "N/A"
-            visibility_km = f"{visibility / 1000:.1f}" if visibility != "N/A" else "N/A"
-
-            forecast = f"""
----
-Time: {time}
-Temperature: {temp}°C (feels like {feels_like}°C)
-Weather: {weather_desc}
-Wind: {wind_speed_mph} mph from {wind_direction}°
-Humidity: {humidity}%
-Precipitation: {precipitation_rate} mm/h ({precipitation_prob}% chance)
-Pressure: {pressure_mb} mb
-Visibility: {visibility_km} km
-UV Index: {uv_index}
-"""
-            forecasts.append(forecast)
-
-        return "\n".join(forecasts)
+        forecast_details = _parse_hourly_forecast(time_series)
+        return f"Hourly forecast for {location_info}:\n{forecast_details}"
     except (KeyError, IndexError) as e:
-        return f"Failed to parse the forecast data. Error: {e}"
+        logging.error(f"Failed to parse hourly forecast data: {e}. Raw data: {data}")
+        return "Failed to parse the hourly forecast data."
+
 
 @mcp.tool()
 async def get_daily_forecast(latitude: float, longitude: float) -> str:
-    """Get the daily weather forecast for a location in the UK.
-
-    Args:
-        latitude: Latitude of the location.
-        longitude: Longitude of the location.
-    """
-    url = f"{MET_OFFICE_API_BASE}/daily"
-    params = {
-        "dataSource": "BD1",
-        "latitude": latitude,
-        "longitude": longitude,
-        "includeLocationName": "true"
-    }
-    data = await make_met_office_request(url, params=params)
-
+    """Get the daily weather forecast for a location in the UK."""
+    data = await _get_forecast_data("daily", latitude, longitude)
     if not data:
         return "Unable to fetch forecast data for this location."
 
@@ -175,58 +199,11 @@ async def get_daily_forecast(latitude: float, longitude: float) -> str:
         time_series = data['features'][0]['properties']['timeSeries']
         location_name = data['features'][0]['properties']['location']['name']
 
-        def _format(value: Any, unit: str = "", factor: float = 1.0) -> str:
-            """Safely formats a numeric value to 1 decimal place."""
-            if isinstance(value, (int, float)):
-                return f"{(value * factor):.1f}{unit}"
-            return "N/A"
-
-        forecasts = [f"Daily forecast for {location_name}:"]
-        for period in time_series:
-            date = period['time'].split('T')[0]
-
-            # Temperatures
-            day_max_temp = _format(period.get('dayMaxScreenTemperature'), "°C")
-            night_min_temp = _format(period.get('nightMinScreenTemperature'), "°C")
-            day_max_feels_like = _format(period.get('dayMaxFeelsLikeTemp'), "°C")
-            night_min_feels_like = _format(period.get('nightMinFeelsLikeTemp'), "°C")
-
-            # Precipitation
-            day_precip_prob = _format(period.get('dayProbabilityOfPrecipitation'), "%")
-            night_precip_prob = _format(period.get('nightProbabilityOfPrecipitation'), "%")
-
-            # Other daily metrics
-            max_uv = _format(period.get('maxUvIndex'))
-            midday_humidity = _format(period.get('middayRelativeHumidity'), "%")
-            midday_visibility_km = _format(period.get('middayVisibility'), " km", 0.001)
-            midday_mslp_hpa = _format(period.get('middayMslp'), " hPa", 0.01)
-            day_wind_speed_mph = _format(period.get('midday10MWindSpeed'), " mph", 2.23694)
-
-            # Weather descriptions
-            day_weather_desc = get_weather_description(period.get('daySignificantWeatherCode', 'NA'))
-            night_weather_desc = get_weather_description(period.get('nightSignificantWeatherCode', 'NA'))
-
-            forecast = f"""
----
-Date: {date}
-Max Temp: {day_max_temp}
-Min Temp: {night_min_temp}
-Feels Like Max Temp: {day_max_feels_like}
-Feels Like Min Temp (Night): {night_min_feels_like}
-Day Precipitation Probability: {day_precip_prob}
-Night Precipitation Probability: {night_precip_prob}
-Max UV Index: {max_uv}
-Midday Relative Humidity: {midday_humidity}
-Midday Visibility: {midday_visibility_km}
-Midday Pressure (MSL): {midday_mslp_hpa}
-Wind Speed (10m): {day_wind_speed_mph}
-Weather: {day_weather_desc} (Day), {night_weather_desc} (Night)"""
-            forecasts.append(forecast.strip())
-
-        return "\n".join(forecasts)
+        forecast_details = _parse_daily_forecast(time_series)
+        return f"Daily forecast for {location_name}:\n{forecast_details}"
     except (KeyError, IndexError) as e:
-        logging.error(f"Failed to parse forecast data: {e}. Raw data: {data}")
-        return "Failed to parse the forecast data. The structure might have changed or the location is invalid."
+        logging.error(f"Failed to parse daily forecast data: {e}. Raw data: {data}")
+        return "Failed to parse the daily forecast data."
 
 if __name__ == "__main__":
     # Initialize and run the server
