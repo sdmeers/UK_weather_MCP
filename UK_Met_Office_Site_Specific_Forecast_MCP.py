@@ -80,6 +80,78 @@ async def make_met_office_request(url: str, params: dict[str, Any] | None = None
             return None
 
 @mcp.tool()
+async def get_hourly_forecast(latitude: float, longitude: float) -> str:
+    """Get the hourly weather forecast for a location in the UK.
+
+    Args:
+        latitude: Latitude of the location.
+        longitude: Longitude of the location.
+    """
+    url = f"{MET_OFFICE_API_BASE}/hourly"
+    # https://datahub.metoffice.gov.uk/docs/f/category/site-specific/type/site-specific/api-documentation#get-/point/hourly
+    # The request data source must be BD1.
+    params = {
+        "dataSource": "BD1",
+        "latitude": latitude,
+        "longitude": longitude,
+        "includeLocationName": "true",
+    }
+    data = await make_met_office_request(url, params=params)
+
+    if not data:
+        return "Unable to fetch forecast data for this location."
+
+    try:
+        # Extract time series and location from the response
+        time_series = data["features"][0]["properties"]["timeSeries"]
+        coordinates = data["features"][0]["geometry"]["coordinates"]
+        location_info = f"Location: {coordinates[1]:.4f}°N, {coordinates[0]:.4f}°E"
+
+        forecasts = [f"Hourly forecast for {location_info}:"]
+
+        for period in time_series:
+            # Parse the hourly data fields
+            time = period["time"]
+            temp = period.get("screenTemperature", "N/A")
+            feels_like = period.get("feelsLikeTemperature", "N/A")
+            humidity = period.get("screenRelativeHumidity", "N/A")
+            wind_speed = period.get("windSpeed10m", "N/A")
+            wind_direction = period.get("windDirectionFrom10m", "N/A")
+            weather_code = period.get("significantWeatherCode", "NA")
+            precipitation_rate = period.get("precipitationRate", "N/A")
+            precipitation_prob = period.get("probOfPrecipitation", "N/A")
+            visibility = period.get("visibility", "N/A")
+            uv_index = period.get("uvIndex", "N/A")
+            pressure = period.get("mslp", "N/A")
+
+            weather_desc = get_weather_description(weather_code)
+
+            # Convert units for better readability
+            wind_speed_mph = (
+                f"{wind_speed * 2.237:.1f}" if wind_speed != "N/A" else "N/A"
+            )
+            pressure_mb = f"{pressure / 100:.1f}" if pressure != "N/A" else "N/A"
+            visibility_km = f"{visibility / 1000:.1f}" if visibility != "N/A" else "N/A"
+
+            forecast = f"""
+---
+Time: {time}
+Temperature: {temp}°C (feels like {feels_like}°C)
+Weather: {weather_desc}
+Wind: {wind_speed_mph} mph from {wind_direction}°
+Humidity: {humidity}%
+Precipitation: {precipitation_rate} mm/h ({precipitation_prob}% chance)
+Pressure: {pressure_mb} mb
+Visibility: {visibility_km} km
+UV Index: {uv_index}
+"""
+            forecasts.append(forecast)
+
+        return "\n".join(forecasts)
+    except (KeyError, IndexError) as e:
+        return f"Failed to parse the forecast data. Error: {e}"
+
+@mcp.tool()
 async def get_daily_forecast(latitude: float, longitude: float) -> str:
     """Get the daily weather forecast for a location in the UK.
 
